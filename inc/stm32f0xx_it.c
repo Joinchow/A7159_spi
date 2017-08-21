@@ -56,9 +56,11 @@ __IO uint8_t TxCount = 0;
 __IO uint16_t RxCount = 0; 
 __IO uint16_t bb[16];
 __IO uint8_t ren = 0;
+__IO uint16_t RxCnt;
 void TimingDelay_Decrement(void);
 void Delay(__IO uint32_t nTime);
 extern uint8_t ID[4];
+__IO bool getSPI = false ;
 
 
 /* Private function prototypes -----------------------------------------------*/
@@ -144,9 +146,7 @@ void USART2_IRQHandler(void)
   if(USART_GetITStatus(EVAL_COM1, USART_IT_RXNE) != RESET)
   {
     /* Read one byte from the receive data register */
-    bb[ren] = (USART_ReceiveData(EVAL_COM1) & 0x007F);
-    USART_SendData(EVAL_COM1,bb[ren++]);
-    USART_ClearITPendingBit(EVAL_COM1,USART_IT_RXNE);
+    TxBuffer[TxCount++] = (USART_ReceiveData(EVAL_COM1) & 0x007F);
     if(RxCount == NbrOfDataToRead)
     {
       /* Disable the EVAL_COM1 Receive interrupt */
@@ -157,12 +157,10 @@ void USART2_IRQHandler(void)
   if(USART_GetITStatus(EVAL_COM1, USART_IT_TXE) != RESET)
   {   
     /* Write one byte to the transmit data register */
-    USART_SendData(EVAL_COM1, bb[TxCount++]);
-    USART_ClearITPendingBit(EVAL_COM1,USART_IT_TXE);
+    USART_SendData(EVAL_COM1, bb[ren++]);
     if(TxCount == NbrOfDataToTransfer)
     {
       /* Disable the EVAL_COM1 Transmit interrupt */
-      USART_ITConfig(EVAL_COM1, USART_IT_TXE, DISABLE);
       USART_ClearITPendingBit(EVAL_COM1,USART_IT_TXE);
     }
   }
@@ -178,9 +176,8 @@ void SPI1_IRQHandler(void)
   /* SPI in Slave Receiver mode--------------------------------------- */
   if (SPI_I2S_GetITStatus(SPIx, SPI_I2S_IT_RXNE) == SET)
   {
-    RxBuffer[inbox++] = SPI_I2S_ReceiveData16(SPIx);
-    if(inbox == 3)
-    {GPIOC->BSRR = BSRR_VAL1;}
+    bb[ren++] = SPI_I2S_ReceiveData16(SPIx);
+    getSPI = true ;
   }
   
   /* SPI Error interrupt--------------------------------------- */
@@ -199,13 +196,12 @@ void SPI1_IRQHandler(void)
   if (SPI_I2S_GetITStatus(SPIx, SPI_I2S_IT_TXE) == SET)
   {
     SPI_I2S_ITConfig(SPIx, SPI_I2S_IT_TXE, DISABLE);
-    GPIOC->BSRR = BSRR_VAL1;
   }
   
   /* SPI in Master Receiver mode--------------------------------------- */
   if (SPI_I2S_GetITStatus(SPIx, SPI_I2S_IT_RXNE) == SET)
   {
-    bb[ren++] = SPI_I2S_ReceiveData16(SPIx);
+    bb[ren++] = SPI_ReceiveData8(SPIx);
   }
   
   /* SPI Error interrupt--------------------------------------- */

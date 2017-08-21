@@ -5,6 +5,7 @@
 #include "stm32f0xx_it.h"
 #include <stdio.h>
 #include "stm320518_eval.h"
+#include "stdbool.h"
 
 
 #define SPI_MASTER

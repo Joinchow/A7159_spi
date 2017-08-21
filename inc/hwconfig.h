@@ -7,13 +7,6 @@
 #define SPIx_IRQn                        SPI1_IRQn
 #define SPIx_IRQHandler                  SPI1_IRQHandler
 
-#define SPIx_NSS_PIN                     GPIO_Pin_4
-#define SPIx_NSS_GPIO_PORT               GPIOA
-#define SPIx_NSS_GPIO_CLK                RCC_AHBPeriph_GPIOA
-#define SPIx_NSS_SOURCE                  GPIO_PinSource4
-#define SPIx_NSS_AF                      GPIO_AF_0
-
-
 #define SPIx_SCK_PIN                     GPIO_Pin_5
 #define SPIx_SCK_GPIO_PORT               GPIOA
 #define SPIx_SCK_GPIO_CLK                RCC_AHBPeriph_GPIOA

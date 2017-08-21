@@ -20,6 +20,7 @@ void TimingDelay_Decrement(void);
 void SysTick_Handler(void);
 void Delay(__IO uint32_t nTime);
 void A7159_Config(void);
+void A7159_ReadReg(uint8_t address);
 void A7159_WriteReg(uint8_t address ,uint16_t dataWord);
 void A7159_WritePageA(uint8_t address, uint16_t dataWord);
 void A7159_WritePageB(uint8_t address, uint16_t dataWord);
@@ -28,10 +29,16 @@ void A7159_WriteFIFO(void);
 void entry_deep_sleep_mode(void);
 void wake_up_from_deep_sleep_mode(void);
 void GPIO2_Config(void);
+void GPIOA4_Config(void);
+void SPICSOn(void);
+void SPICSOff(void);
+void Rxpacket(void);
 uint8_t A7159_Cal(void);
 uint8_t InitRF(void);
 extern __IO uint16_t bb[];
 extern __IO uint16_t RxBuffer[];
+extern __IO uint16_t RxCnt;
+extern __IO bool getSPI ;
 SPI_InitTypeDef         SPI_InitStructure;
 GPIO_InitTypeDef        GPIO_InitStructure;
 static __IO uint32_t TimingDelay;
@@ -66,7 +73,7 @@ const uint16_t A7159Config_PageA[]=   //433MHz, 10kbps (IFBW = 100KHz, Fdev = 37
     0x0706,     //RTH register,
     0x400F,     //AGC1 register,    
     0x2AC0,     //AGC2 register, 
-    0x0045,     //GIO register,     GIO2=WTR, GIO1=FSYNC
+    0x0059,     //GIO register,     GIO2=WTR, GIO1=FSYNC
     0xD981,     //CKO register
     0x0004,     //VCB register,
     0x1A21,     //CHG1 register,    430MHz
@@ -124,12 +131,7 @@ const uint8_t PN9_Tab[64]=
 
 int main(void)
 {
-  /* SPI configuration ------------------------------------------------------*/
-  SPI_Config();
-  
-  USART_Config();
-  
-  GPIO2_Config();
+
   /* Output a message on Hyperterminal using printf function */
 
   if (SysTick_Config(SystemCoreClock / 1000))
@@ -137,6 +139,15 @@ int main(void)
     /* Capture error */ 
     while (1);
   }
+  
+  /* SPI configuration ------------------------------------------------------*/
+  SPI_Config();
+  
+  USART_Config();
+  
+  GPIO2_Config();
+  
+  GPIOA4_Config();
   /* Loop until the end of transmission */
   /* The software must wait until TC=1. The TC flag remains cleared during all data
      transfers and it is set by hardware at the last frame’s end of transmission*/
@@ -188,20 +199,67 @@ int main(void)
     }
   }
   #if defined (SPI_MASTER)
+  
   A7159_WriteFIFO();
   SPI_SendData8(SPIx,CMD_TX);
   Delay(1);
+  while(GPIO_ReadOutputDataBit(GPIOC,GPIO_Pin_1) == Bit_RESET);
+  SPI_SendData8(SPIx,CMD_RX);
+  Delay(1);
   
+  while((GPIO_ReadOutputDataBit(GPIOC,GPIO_Pin_1) == Bit_SET) && SPI_I2S_GetFlagStatus(SPIx, SPI_I2S_FLAG_BSY) == SET);
+  if(SPI_I2S_GetFlagStatus(SPIx, SPI_I2S_FLAG_BSY))
+  {
+    SPI_SendData8(SPIx,CMD_STBY);
+  }
+  else
+  {
+    Rxpacket();
+    Delay(10);
+  }
   #endif /* SPI_MASTER*/
+  
+  #if defined (SPI_SLAVE)
+  
+  RxCnt = 0;
+  
+  while(1)
+  {
+    SPI_SendData8(SPIx,CMD_RX);
+    Delay(1);
+    while(GPIO_Pin_1);
+    Rxpacket();
+    
+    A7159_WriteFIFO();
+    SPI_SendData8(SPIx,CMD_TX);
+    Delay(1);
+    while(GPIO_Pin_1);
+    
+    Delay(100);
+  }
+  #endif /* SPI_SLAVE*/
+  
 }
+
 void GPIO2_Config(void)
 {
+  RCC_AHBPeriphClockCmd(RCC_AHBPeriph_GPIOC, ENABLE);
   GPIO_InitStructure.GPIO_Pin = GPIO_Pin_1;
   GPIO_InitStructure.GPIO_Mode = GPIO_Mode_OUT;
   GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
   GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
   GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL;
   GPIO_Init(GPIOC, &GPIO_InitStructure);
+}
+void GPIOA4_Config(void)
+{
+  RCC_AHBPeriphClockCmd(RCC_AHBPeriph_GPIOA, ENABLE);
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_4;
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_OUT;
+  GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
+  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+  GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL;
+  GPIO_Init(GPIOA, &GPIO_InitStructure);
 }
 PUTCHAR_PROTOTYPE
 {
@@ -225,6 +283,12 @@ void A7159_Config(void)
   {
     A7159_WriteReg(i,A7159Config[i]);
   }
+  Delay(10);
+  for(i=0;i<1;i++)
+  {
+    A7159_ReadReg(i);
+    while(!getSPI);
+  }
   for(i=10;i<16;i++)
   {
     A7159_WriteReg(i,A7159Config[i]);
@@ -242,20 +306,24 @@ void A7159_Config(void)
 }
 void A7159_WritePageA(uint8_t address, uint16_t dataWord)
 {
+  SPICSOn();
   uint16_t tmp;
   tmp = address;
   tmp = ((tmp << 12) | A7159Config[CRYSTAL_REG]);
   A7159_WriteReg(CRYSTAL_REG, tmp);
   A7159_WriteReg(PAGEA_REG, dataWord);
+  SPICSOff();
 }
 
 void A7159_WritePageB(uint8_t address, uint16_t dataWord)
 {
+  SPICSOn();
   uint16_t tmp;
   tmp = address;
   tmp = ((tmp << 7) | A7159Config[CRYSTAL_REG]);
   A7159_WriteReg(CRYSTAL_REG, tmp);
   A7159_WriteReg(PAGEB_REG, dataWord);
+  SPICSOff();
 }
 void A7159_WriteID(void)
 {
@@ -269,10 +337,20 @@ void A7159_WriteID(void)
 }
 void A7159_WriteReg(uint8_t address ,uint16_t dataWord)
 {
+  SPICSOn();
   address |= CMD_Reg_W ;
   SPI_SendData8(SPIx,address);
   SPI_I2S_SendData16(SPIx,dataWord);
   printf("(%02X)(%04X)\r\n",address,dataWord);
+  SPICSOff();
+}
+void A7159_ReadReg(uint8_t address)
+{
+  SPICSOn();
+  address |= CMD_Reg_R ;
+  SPI_I2S_SendData16(SPIx,address);
+  printf("(%02X)(%04X)\r\n",address-0x80,bb[address]);
+  SPICSOff();
 }
 void A7159_WriteFIFO(void)
 {
@@ -344,8 +422,10 @@ uint8_t A7159_Cal(void)
 }
 uint8_t InitRF(void)
 {
+  SPICSOn();
   SPI_SendData8(SPIx,CMD_RF_RST);
-  Delay(1);
+  SPICSOff();
+  Delay(10);
   A7159_Config();
   Delay(1);
   A7159_WriteID();
@@ -359,6 +439,7 @@ uint8_t InitRF(void)
 }
 void entry_deep_sleep_mode(void)
 {
+  SPICSOn();
   SPI_SendData8(SPIx,CMD_RF_RST);
   A7159_WriteReg(PIN_REG, A7159Config[PIN_REG] | 0x0800);
   A7159_WritePageA(PM_PAGEA, A7159Config_PageA[PM_PAGEA] | 0x0010);
@@ -367,11 +448,35 @@ void entry_deep_sleep_mode(void)
   Delay(6);
   SPI_SendData8(SPIx,CMD_DEEP_SLEEP);
   Delay(2);
+  SPICSOff();
+}
+void Rxpacket(void)
+{
+  uint8_t i;
+  uint8_t recv;
+  uint8_t tmp;
+  
+  RxCnt++;
+  
+  SPI_SendData8(SPIx,CMD_RFR);
+  SPI_SendData8(SPIx,CMD_FIFO_R);
+  
+  for(i=0;i<64;i++)
+  {
+    recv = bb[i];
+    tmp = recv ^ PN9_Tab[i];
+    if(tmp != 0)
+    {
+      printf("ERROR");
+    }
+  }
 }
 void wake_up_from_deep_sleep_mode(void)
 {
+  SPICSOn();
   SPI_SendData8(SPIx,CMD_STBY);
   Delay(10);
+  SPICSOff();
 }
 void SPI_Config(void)
 {
@@ -381,12 +486,12 @@ void SPI_Config(void)
   /* Enable the SPI periph */
   RCC_APB2PeriphClockCmd(SPIx_CLK, ENABLE);  
   /* Enable SCK, MOSI, MISO and NSS GPIO clocks */
-  RCC_AHBPeriphClockCmd(SPIx_SCK_GPIO_CLK | SPIx_MISO_GPIO_CLK | SPIx_MOSI_GPIO_CLK | SPIx_NSS_GPIO_CLK , ENABLE);
+  RCC_AHBPeriphClockCmd(SPIx_SCK_GPIO_CLK | SPIx_MISO_GPIO_CLK | SPIx_MOSI_GPIO_CLK , ENABLE);
   
   GPIO_PinAFConfig(SPIx_SCK_GPIO_PORT, SPIx_SCK_SOURCE, SPIx_SCK_AF);
   GPIO_PinAFConfig(SPIx_MOSI_GPIO_PORT, SPIx_MOSI_SOURCE, SPIx_MOSI_AF);
   GPIO_PinAFConfig(SPIx_MISO_GPIO_PORT, SPIx_MISO_SOURCE, SPIx_MISO_AF);
-  GPIO_PinAFConfig(SPIx_NSS_GPIO_PORT, SPIx_NSS_SOURCE, SPIx_NSS_AF);
+//  GPIO_PinAFConfig(SPIx_NSS_GPIO_PORT, SPIx_NSS_SOURCE, SPIx_NSS_AF);
   
   GPIO_InitStructure.GPIO_Mode                 = GPIO_Mode_AF;
   GPIO_InitStructure.GPIO_OType                = GPIO_OType_PP;
@@ -394,19 +499,9 @@ void SPI_Config(void)
   GPIO_InitStructure.GPIO_Speed                = GPIO_Speed_Level_3;
 
   /* SPI SCK pin configuration */
-  GPIO_InitStructure.GPIO_Pin                  = SPIx_SCK_PIN;
+  GPIO_InitStructure.GPIO_Pin                  = SPIx_SCK_PIN | SPIx_MOSI_PIN | SPIx_MISO_PIN;
   GPIO_Init(SPIx_SCK_GPIO_PORT, &GPIO_InitStructure);
 
-  /* SPI  MOSI pin configuration */
-  GPIO_InitStructure.GPIO_Pin                  =  SPIx_MOSI_PIN;
-  GPIO_Init(SPIx_MOSI_GPIO_PORT, &GPIO_InitStructure);
-
-  /* SPI MISO pin configuration */
-  GPIO_InitStructure.GPIO_Pin                  = SPIx_MISO_PIN;
-  GPIO_Init(SPIx_MISO_GPIO_PORT, &GPIO_InitStructure);
-  
-  GPIO_InitStructure.GPIO_Pin                  = SPIx_NSS_PIN;
-  GPIO_Init(SPIx_NSS_GPIO_PORT, &GPIO_InitStructure);
   
   /* SPI configuration -------------------------------------------------------*/
   SPI_I2S_DeInit(SPIx);
@@ -426,6 +521,14 @@ void SPI_Config(void)
   NVIC_InitStructure.NVIC_IRQChannelPriority   = 1;
   NVIC_InitStructure.NVIC_IRQChannelCmd        = ENABLE;
   NVIC_Init(&NVIC_InitStructure);
+}
+void SPICSOn(void)
+{
+  GPIOA->BRR = GPIO_Pin_4 ;
+}
+void SPICSOff(void)
+{
+  GPIOA->BSRR = GPIO_Pin_4 ;
 }
 static void USART_Config(void)
 { 
